@@ -2,13 +2,18 @@
 #include <cstdlib>
 #include <locale.h>
 #include <cmath>
-#include <vector>
 #include <algorithm>
+#include <ctime>
 
 using namespace std;
 
 Game::Game()
 {
+    m_maze.resize(m_mazeWidth * m_mazeHeight, 0);
+    m_stack.push(make_pair(0, 0));
+    m_maze[0] = CELL_VISITED;
+    m_nVisitedCells = 1;
+    
     setlocale(LC_ALL, "");
 	initscr();
     noecho();
@@ -21,34 +26,30 @@ Game::Game()
     start_color();
 	init_pair(1, COLOR_BLACK, COLOR_WHITE);
     init_pair(2, COLOR_BLACK, COLOR_YELLOW);
+    init_pair(3, COLOR_BLACK, COLOR_BLUE);
+    init_pair(4, COLOR_WHITE, COLOR_BLACK);
 
     m_screenWidth = COLS / 2;
-    m_screenHeight = m_screenWidth / 3;
+    m_screenHeight = m_screenWidth / 2;
     m_screenStartPosY = (LINES - m_screenHeight) / 2;
-    m_screenStartPosX = (COLS - m_screenWidth) / 2;
+    m_screenStartPosX = (COLS - m_screenWidth) / 1.1;
 
     m_gameWindow = newwin(m_screenHeight, m_screenWidth, m_screenStartPosY, m_screenStartPosX);
-    m_miniMapWindow = newwin(m_mapHeight, m_mapWidth * 2, 1, 0);
-    m_mapEditorWindow = newwin(m_mapHeight, 2 * m_mapWidth, 1, 1);
+    // m_miniMapWindow = newwin(m_mazeHeight, m_mazeWidth * 2, 1, 0);
+    // m_mapEditorWindow = newwin(m_mazeHeight, m_mazeWidth * 2, 1, 1);
+    m_mapWidth = m_mazeWidth * (m_pathWidth + 1) + 1;
+    m_mapHeight = m_mazeHeight * (m_pathWidth + 1) + 1;
+    m_depth = m_mapHeight;
+    m_map.resize(m_mapWidth * m_mapHeight, '#');
+    m_miniMapWindow = newwin(m_mapHeight, m_mapWidth * 2, 1, 1);
+    m_mapEditorWindow = newwin(m_mapHeight, m_mapWidth * 2, 1, 1);
 
     nodelay(m_gameWindow, true);
 
-    m_map += L"################";
-    m_map += L"#..............#";
-    m_map += L"#..............#";
-    m_map += L"#######........#";
-    m_map += L"#######........#";
-    m_map += L"#..............#";
-    m_map += L"#..............#";
-    m_map += L"#..............#";
-    m_map += L"#..............#";
-    m_map += L"#..............#";
-    m_map += L"#...########...#";
-    m_map += L"#......##......#";
-    m_map += L"#......##......#";
-    m_map += L"#......##......#";
-    m_map += L"#......##......#";
-    m_map += L"################";
+    
+    generateMaze();
+
+    
 }
 
 Game::~Game()
@@ -82,6 +83,7 @@ void Game::run()
 
 void Game::gameControl(float elapsedTime)
 {
+    bool isPlayerInMap = m_playerX >= 0 && m_playerX <= m_mapWidth && m_playerY >= 0 && m_playerY <= m_mapHeight;
     wchar_t ch = wgetch(m_gameWindow);
     switch(ch)
     {
@@ -95,7 +97,7 @@ void Game::gameControl(float elapsedTime)
         m_playerX += sin(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
         m_playerY += cos(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
         // wall collision
-        if(m_map[(int)m_playerY * m_mapWidth + (int)m_playerX] == '#')
+        if(!isPlayerInMap || m_map[(int)m_playerY * m_mapWidth + (int)m_playerX] == '#')
         {
             m_playerX -= sin(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
             m_playerY -= cos(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
@@ -105,7 +107,7 @@ void Game::gameControl(float elapsedTime)
         m_playerX -= sin(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
         m_playerY -= cos(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
         // wall collision
-        if(m_map[(int)m_playerY * m_mapWidth + (int)m_playerX] == '#')
+        if(!isPlayerInMap ||  m_map[(int)m_playerY * m_mapWidth + (int)m_playerX] == '#')
         {
             m_playerX += sin(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
             m_playerY += cos(m_playerAngle) * m_playerMoveSpeed * elapsedTime;
@@ -230,28 +232,275 @@ void Game::gameRender()
 
 void Game::mapRender(WINDOW *window)
 {
-    wstring display_map = m_map;
+    string display_map = m_map;
     int playerIdx = (int)m_playerY * m_mapWidth + (int)m_playerX;
     display_map[playerIdx] = 'P';
-    for(int x = 0; x < m_mapWidth; x++) {
-        for(int y = 0; y < m_mapHeight; y++) {
-            if (display_map[y * m_mapWidth + x] == '#') {
+    for(int x = 0; x < m_mapWidth; x++) 
+    {
+        for(int y = 0; y < m_mapHeight; y++) 
+        {
+            // int displayX = m_mapWidth - x - 1;
+            if (display_map[y * m_mapWidth + x] == '#') 
+            {
                 wattron(window, COLOR_PAIR(1));
-                mvwaddstr(window, y, 2*x, "  ");
+                mvwaddstr(window, y, 2 * x, "  ");
                 wattroff(window, COLOR_PAIR(1));
             }
-            else if (display_map[y * m_mapWidth + x] == 'P') {
+            else if (display_map[y * m_mapWidth + x] == 'P') 
+            {
                 wattron(window, COLOR_PAIR(2));
-                mvwaddstr(window, y, 2*x, "  ");
+                mvwaddstr(window, y, 2 * x, "  ");
                 wattroff(window, COLOR_PAIR(2));
             }
-            else {
-               mvwaddstr(window, y, 2*x, "  "); 
+            else 
+            {
+               mvwaddstr(window, y, 2 * x, "  "); 
             }
         }  
     }
     wrefresh(window);
 }
+
+void Game::generateMaze()
+{
+    srand(time(0));
+
+    while (!m_stack.empty())
+        m_stack.pop();
+    for (auto &state : m_maze) 
+        state = 0;
+
+    m_stack.push(make_pair(0, 0));
+    m_maze[0] = CELL_VISITED;
+    m_nVisitedCells = 1;
+    m_playerX = 1.0f;
+    m_playerY = 1.0f;
+    // do the maze algorithm
+    while (m_nVisitedCells < m_mazeWidth * m_mazeHeight)
+    {
+        int top_x = m_stack.top().first;
+        int top_y = m_stack.top().second;
+        auto offset = [&](int x, int y) 
+        {
+            return (top_y + y) * m_mazeWidth + (top_x + x);
+        };
+        // step 1: create a set of the unvisited neighbours
+        vector<int> neighbours;
+        // north neighbour
+        if (top_y > 0 && (m_maze[offset(0, -1)] & CELL_VISITED) == 0)
+        {
+            neighbours.push_back(0);
+        }
+        // east neighbour
+        if (top_x < m_mazeWidth - 1 && (m_maze[offset(1, 0)] & CELL_VISITED) == 0)
+        {
+            neighbours.push_back(1);
+        }
+        // south neighbour
+        if (top_y < m_mazeHeight - 1 && (m_maze[offset(0, 1)] & CELL_VISITED) == 0)
+        {
+            neighbours.push_back(2);
+        }
+        // west neighbour
+        if (top_x > 0 && (m_maze[offset(-1, 0)] & CELL_VISITED) == 0)
+        {
+            neighbours.push_back(3);
+        }
+
+        // Are there any neighbour available?
+        if (!neighbours.empty()) 
+        {
+            // Choose a neighbour randomly
+            int next_cell_dir = neighbours[rand() % neighbours.size()];
+            // Create a path between the neighbour and the current cell
+            switch (next_cell_dir)
+            {
+            case 0: // North
+                m_maze[offset(0, 0)] |= CELL_PATH_N;
+                m_maze[offset(0, -1)] |= CELL_VISITED | CELL_PATH_S;
+                m_stack.push(make_pair(top_x, top_y - 1));
+                break;
+            case 1: // East
+                m_maze[offset(0, 0)] |= CELL_PATH_E;
+                m_maze[offset(1, 0)] |= CELL_VISITED | CELL_PATH_W;
+                m_stack.push(make_pair(top_x + 1, top_y));
+                break;
+            case 2: // South
+                m_maze[offset(0, 0)] |= CELL_PATH_S;
+                m_maze[offset(0, 1)] |= CELL_VISITED | CELL_PATH_N;
+                m_stack.push(make_pair(top_x, top_y + 1));
+                break;
+            case 3: // West
+                m_maze[offset(0, 0)] |= CELL_PATH_W;
+                m_maze[offset(-1, 0)] |= CELL_VISITED | CELL_PATH_E;
+                m_stack.push(make_pair(top_x - 1, top_y));
+                break;
+            }
+            m_nVisitedCells++;
+        }
+        else
+        {
+            // no neighbour available -> back track
+            m_stack.pop(); // backtrack
+        }
+    }
+
+    // generate the maze
+    for (auto &c : m_map)
+        c = '#';
+
+    for (int x = 0; x < m_mazeWidth; x++) 
+    {
+        for (int y = 0; y < m_mazeHeight; y++) 
+        {
+            for (int px = 0; px < m_pathWidth; px++)
+            {
+                for (int py = 0; py < m_pathWidth; py++)
+                {
+                    if (m_maze[y * m_mazeWidth + x] & CELL_VISITED) 
+                    {
+                        int mapY = y * (m_pathWidth + 1) + py + 1;
+                        int mapX = x * (m_pathWidth + 1) + px + 1;
+                        m_map[mapY * m_mapWidth + mapX] = ' ';
+                    }
+                }
+            }
+            
+            for (int p = 0; p < m_pathWidth; p++) 
+            {
+                if (m_maze[y * m_mazeWidth + x] & CELL_PATH_S)
+                {
+                    int mapY = y * (m_pathWidth + 1) + m_pathWidth + 1;
+                    int mapX = x * (m_pathWidth + 1) + p + 1;
+                    m_map[mapY * m_mapWidth + mapX] = ' ';
+                }
+                if (m_maze[y * m_mazeWidth + x] & CELL_PATH_E)
+                {
+                    int mapY = y * (m_pathWidth + 1) + p + 1;
+                    int mapX = x * (m_pathWidth + 1) + m_pathWidth + 1;
+                    m_map[mapY * m_mapWidth + mapX] = ' ';
+                }
+            }
+        }
+    }
+}
+
+// void Game::mapRender(WINDOW *window)
+// {
+//     // do the maze algorithm
+//     if (m_nVisitedCells < m_mazeWidth * m_mazeHeight)
+//     {
+//         int top_x = m_stack.top().first;
+//         int top_y = m_stack.top().second;
+//         auto offset = [&](int x, int y) 
+//         {
+//             return (top_y + y) * m_mazeWidth + (top_x + x);
+//         };
+//         // step 1: create a set of the unvisited neighbours
+//         vector<int> neighbours;
+//         // north neighbour
+//         if (top_y > 0 && (m_maze[offset(0, -1)] & CELL_VISITED) == 0)
+//         {
+//             neighbours.push_back(0);
+//         }
+//         // east neighbour
+//         if (top_x < m_mazeWidth - 1 && (m_maze[offset(1, 0)] & CELL_VISITED) == 0)
+//         {
+//             neighbours.push_back(1);
+//         }
+//         // south neighbour
+//         if (top_y < m_mazeHeight - 1 && (m_maze[offset(0, 1)] & CELL_VISITED) == 0)
+//         {
+//             neighbours.push_back(2);
+//         }
+//         // west neighbour
+//         if (top_x > 0 && (m_maze[offset(-1, 0)] & CELL_VISITED) == 0)
+//         {
+//             neighbours.push_back(3);
+//         }
+
+//         // Are there any neighbour available?
+//         if (!neighbours.empty()) 
+//         {
+//             // Choose a neighbour randomly
+//             int next_cell_dir = neighbours[rand() % neighbours.size()];
+//             // Create a path between the neighbour and the current cell
+//             switch (next_cell_dir)
+//             {
+//             case 0: // North
+//                 m_maze[offset(0, 0)] |= CELL_PATH_N;
+//                 m_maze[offset(0, -1)] |= CELL_VISITED | CELL_PATH_S;
+//                 m_stack.push(make_pair(top_x, top_y - 1));
+//                 break;
+//             case 1: // East
+//                 m_maze[offset(0, 0)] |= CELL_PATH_E;
+//                 m_maze[offset(1, 0)] |= CELL_VISITED | CELL_PATH_W;
+//                 m_stack.push(make_pair(top_x + 1, top_y));
+//                 break;
+//             case 2: // South
+//                 m_maze[offset(0, 0)] |= CELL_PATH_S;
+//                 m_maze[offset(0, 1)] |= CELL_VISITED | CELL_PATH_N;
+//                 m_stack.push(make_pair(top_x, top_y + 1));
+//                 break;
+//             case 3: // West
+//                 m_maze[offset(0, 0)] |= CELL_PATH_W;
+//                 m_maze[offset(-1, 0)] |= CELL_VISITED | CELL_PATH_E;
+//                 m_stack.push(make_pair(top_x - 1, top_y));
+//                 break;
+//             }
+//             m_nVisitedCells++;
+//         }
+//         else
+//         {
+//             // no neighbour available -> back track
+//             m_stack.pop(); // backtrack
+//         }
+//     }
+
+//     // draw the maze
+//     wbkgd(window, COLOR_PAIR(1));
+//     for (int x = 0; x < m_mazeWidth; x++) 
+//     {
+//         for (int y = 0; y < m_mazeHeight; y++) 
+//         {
+//             for (int px = 0; px < m_pathWidth; px++)
+//             {
+//                 for (int py = 0; py < m_pathWidth; py++)
+//                 {
+//                     if (m_maze[y * m_mazeWidth + x] & CELL_VISITED) 
+//                     {
+//                         wattron(window, COLOR_PAIR(4));
+//                         mvwaddstr(window, y * (m_pathWidth + 1) + py + 1, 2 * (x * (m_pathWidth + 1) + px) + 2, "  ");
+//                         wattroff(window, COLOR_PAIR(4));
+//                     }
+//                     else 
+//                     {
+//                         wattron(window, COLOR_PAIR(3));
+//                         mvwaddstr(window, y * (m_pathWidth + 1) + py + 1, 2 * (x * (m_pathWidth + 1) + px) + 2, "  ");
+//                         wattroff(window, COLOR_PAIR(3));
+//                     }
+//                 }
+//             }
+            
+//             for (int p = 0; p < m_pathWidth; p++) 
+//             {
+//                 if (m_maze[y * m_mazeWidth + x] & CELL_PATH_S)
+//                 {
+//                     wattron(window, COLOR_PAIR(4));
+//                     mvwaddstr(window, y * (m_pathWidth + 1) + m_pathWidth + 1, 2 * (x * (m_pathWidth + 1) + p) + 2, "  ");
+//                     wattroff(window, COLOR_PAIR(4));
+//                 }
+//                 if (m_maze[y * m_mazeWidth + x] & CELL_PATH_E)
+//                 {
+//                     wattron(window, COLOR_PAIR(4));
+//                     mvwaddstr(window, y * (m_pathWidth + 1) + p + 1, 2 * (x * (m_pathWidth + 1) + m_pathWidth) + 2, "  ");
+//                     wattroff(window, COLOR_PAIR(4));
+//                 }
+//             }
+//         }
+//     }
+//     wrefresh(window);
+// }
 
 void Game::editMap()
 {
@@ -260,6 +509,7 @@ void Game::editMap()
     refresh();
     mapRender(m_mapEditorWindow);
 
+    m_playerAngle = PI;
     int pixelX = 0, pixelY = 0;
     while (m_mapEditorMode)
     {
@@ -282,6 +532,23 @@ void Game::editMap()
             if (pixelY < m_mapHeight)    
                 wmove(m_mapEditorWindow, pixelY++, pixelX);
             break;
+        case 'g': case 'G':
+            generateMaze();
+            mapRender(m_mapEditorWindow);
+            break;
+        case 'c': case 'C':
+            for (int x = 0; x < m_mapWidth; x++) 
+            {
+                for (int y = 0; y < m_mapHeight; y++)
+                {
+                    if (x == 0 || x == m_mapWidth - 1 || y == 0 || y == m_mapHeight - 1)
+                        m_map[y * m_mapWidth + x] = '#';
+                    else 
+                        m_map[y * m_mapWidth + x] = ' ';
+                }    
+            }
+            mapRender(m_mapEditorWindow);
+            break;
         case '1':
         {
             int idx = pixelY * m_mapWidth + pixelX / 2;
@@ -302,7 +569,7 @@ void Game::editMap()
             if (idx != playerIdx) 
             {
                 mvwaddstr(m_mapEditorWindow, pixelY, pixelX, "  ");
-                m_map[idx] = '.';
+                m_map[idx] = ' ';
             }
             break;
         }  
