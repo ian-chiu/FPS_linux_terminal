@@ -1,2 +1,2 @@
 all:
-	g++ -g -Wall main.cpp Game.cpp -lncursesw
+	g++ -O3 main.cpp Game.cpp -lncursesw -o fps
